@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:intl/intl.dart';
 
 import '../adapter.dart';
 import '../cancel_token.dart';
@@ -81,6 +82,49 @@ class DioForNative with DioMixin implements Dio {
       options = checkOptions("GET", options);
     }
 
+    // Create HEAD request to get last modified date
+    Response headResponse;
+    try {
+      headResponse = await head(
+        urlPath,
+        data: data,
+        options: Options(method: 'HEAD', ),
+        queryParameters: queryParameters,
+      );
+    } on DioError catch (e) {
+      print(e.message);
+      print(e.response);
+      if (e.type == DioErrorType.RESPONSE) {
+        if (e.response.request.receiveDataWhenStatusError) {
+          var res = await transformer.transformResponse(
+            e.response.request..responseType = ResponseType.json,
+            e.response.data,
+          );
+          e.response.data = res;
+        } else {
+          e.response.data = null;
+        }
+      }
+      rethrow;
+    } catch (e) {
+      rethrow;
+    }
+
+    DateFormat format = DateFormat('EEE, dd MMM yyyy hh:mm:ss vvvv');
+    var lastEdited = format.parse(headResponse.headers['last-modified'].first);
+
+    var tempDir = Directory.systemTemp;
+    var tempFilename = '${tempDir.path}/${savePath.toString().split('/').last}.${lastEdited.millisecondsSinceEpoch}';
+
+    // Check if temp file exists
+    var tempFile = File(tempFilename);
+    var initialSize = 0;
+
+    if (tempFile.existsSync()) {
+      initialSize = tempFile.lengthSync();
+      options.headers['Range'] = 'bytes=$initialSize-';
+    }
+
     // Receive data with stream.
     options.responseType = ResponseType.stream;
     Response<ResponseBody> response;
@@ -110,19 +154,19 @@ class DioForNative with DioMixin implements Dio {
     }
 
     response.headers = Headers.fromMap(response.data.headers);
-    File file;
-    if (savePath is Function) {
-      assert(savePath is String Function(Headers),
-          "savePath callback type must be `String Function(HttpHeaders)`");
-      file = File(savePath(response.headers));
-    } else {
-      file = File(savePath.toString());
-    }
+//    File file;
+//    if (savePath is Function) {
+//      assert(savePath is String Function(Headers),
+//          "savePath callback type must be `String Function(HttpHeaders)`");
+//      file = File(savePath(response.headers));
+//    } else {
+//      file = File(savePath.toString());
+//    }
 
     // Shouldn't call file.writeAsBytesSync(list, flush: flush),
     // because it can write all bytes by once. Consider that the
     // file with a very big size(up 1G), it will be expensive in memory.
-    var raf = file.openSync(mode: FileMode.write);
+    var raf = tempFile.openSync(mode: FileMode.append);
 
     //Create a Completer to notify the success/error state.
     Completer completer = Completer<Response>();
@@ -151,7 +195,7 @@ class DioForNative with DioMixin implements Dio {
         closed = true;
         await asyncWrite;
         await raf.close();
-        if (deleteOnError) await file.delete();
+        if (deleteOnError) await tempFile.delete();
       }
     }
 
@@ -163,7 +207,7 @@ class DioForNative with DioMixin implements Dio {
           // Notify progress
           received += data.length;
           if (onReceiveProgress != null) {
-            onReceiveProgress(received, total);
+            onReceiveProgress(received + initialSize, total + initialSize);
           }
           raf = _raf;
           if (cancelToken == null || !cancelToken.isCancelled) {
@@ -182,6 +226,8 @@ class DioForNative with DioMixin implements Dio {
           await asyncWrite;
           closed=true;
           await raf.close();
+          tempFile.copySync(savePath);
+          tempFile.deleteSync();
           completer.complete(response);
         } catch (e) {
           completer.completeError(assureDioError(e));
