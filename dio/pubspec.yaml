@@ -10,7 +10,7 @@ environment:
 dependencies:
   http_parser: ">=0.0.1 <4.0.0"
   path: ^1.6.4
-  intl: ^0.16.0
+  intl: ^0.15.8
 
 dev_dependencies:
   test: ^1.5.1
