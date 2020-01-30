@@ -110,6 +110,8 @@ class DioForNative with DioMixin implements Dio {
       rethrow;
     }
 
+    // Specifically pass "en" as locale as we expect HTTP response to be English of course
+    // Otherwise causes issues if "en" is not defined as supported locale
     DateFormat format = DateFormat('EEE, dd MMM yyyy hh:mm:ss vvvv', 'en');
     var lastEdited = format.parse(headResponse.headers['last-modified'].first);
 
